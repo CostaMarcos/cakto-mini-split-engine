@@ -53,12 +53,12 @@ class PaymentProcessor:
             receivables.append({
                 "recipient_id": split["recipient_id"],
                 "role": split["role"],
-                "amount": float(recipient_amount)
+                "amount": recipient_amount
             })
 
         return {
-            "gross_amount": float(gross_amount),
-            "platform_fee_amount": float(fee_amount),
-            "net_amount": float(net_amount),
+            "gross_amount": gross_amount,
+            "platform_fee_amount": fee_amount,
+            "net_amount": net_amount,
             "receivables": receivables,
         }

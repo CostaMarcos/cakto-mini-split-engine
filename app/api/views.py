@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from app.api.serializers import RequestTransactionSerializer, PaymentResponseSerializer
 from app.services.payment_process import PaymentProcessor
+from app.services.payment_service import PaymentService
 
 
 class HealthCheckViewSet(viewsets.ViewSet):
@@ -19,5 +20,24 @@ class CheckoutQuoteView(APIView):
 
             response_serializer = PaymentResponseSerializer(result)
             return Response(response_serializer.data, status=status.HTTP_200_OK)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class PaymentView(APIView):
+    def post(self, request):
+        idempotency_key = request.headers.get('Idempotency-Key')
+        if not idempotency_key:
+            return Response(
+                {"error": "Idempotency-Key header é obrigatório."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        serializer = RequestTransactionSerializer(data=request.data)
+        if serializer.is_valid():
+            service = PaymentService()
+            result = service.execute(serializer.validated_data, idempotency_key)
+            
+            response_serializer = PaymentResponseSerializer(result)
+            return Response(response_serializer.data, status=status.HTTP_201_CREATED)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
