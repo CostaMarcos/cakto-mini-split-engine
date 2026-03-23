@@ -61,4 +61,6 @@ class PaymentProcessor:
             "platform_fee_amount": fee_amount,
             "net_amount": net_amount,
             "receivables": receivables,
+            "installments": installments,
+            "payment_method": method
         }

@@ -46,6 +46,7 @@ class OutboxEvent(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     created_at = models.DateTimeField(auto_now_add=True)
     published_at = models.DateTimeField(null=True, blank=True)
+    idempotency_key = models.CharField(unique=True, editable=False, null=True, blank=True)
 
     def __str__(self):
         return f"{self.type} - {self.status}"

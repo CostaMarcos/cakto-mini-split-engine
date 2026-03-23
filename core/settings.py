@@ -118,3 +118,6 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+
+# RabbitMQ configuration
+CELERY_BROKER_URL = f"amqp://{os.environ.get('RABBITMQ_DEFAULT_USER', 'guest')}:{os.environ.get('RABBITMQ_DEFAULT_PASS', 'guest')}@{os.environ.get('RABBITMQ_HOST', 'localhost')}:{os.environ.get('RABBITMQ_PORT', '5672')}//"
