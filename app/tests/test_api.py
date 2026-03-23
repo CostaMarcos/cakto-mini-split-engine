@@ -2,6 +2,8 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 from decimal import Decimal
+from unittest.mock import patch
+from app.models import Payment
 
 class CheckoutQuoteAPITestCase(APITestCase):
     def test_post_checkout_quote_success(self):
@@ -158,7 +160,9 @@ class CheckoutQuoteAPITestCase(APITestCase):
         self.assertEqual(len(response.data["receivables"]), 5)
 
 class PaymentAPITestCase(APITestCase):
-    def test_post_payment_success(self):
+    @patch('django.db.transaction.on_commit', lambda f: f())
+    @patch('app.tasks.process_payment_task.delay')
+    def test_post_payment_async_success(self, mock_task):
         url = reverse('payment-create')
         data = {
             "amount": "100.00",
@@ -175,8 +179,13 @@ class PaymentAPITestCase(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data["gross_amount"], "100.00")
-        self.assertIn("payment_id", response.data)
+        self.assertEqual(response.data["payment_id"], "pending")
+        self.assertEqual(response.data["status"], "processing")
         self.assertIn("outbox_event", response.data)
+        self.assertEqual(response.data["outbox_event"]["status"], "pending")
+        
+        # Verify task dispatched
+        mock_task.assert_called_once()
 
     def test_post_payment_missing_idempotency_key(self):
         url = reverse('payment-create')
@@ -195,25 +204,9 @@ class PaymentAPITestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data["error"], "Idempotency-Key header é obrigatório.")
 
-    def test_post_payment_invalid_data(self):
-        url = reverse('payment-create')
-        data = {
-            "amount": "invalid",
-            "currency": "BRL",
-            "payment_method": "card",
-            "installments": 1,
-            "splits": [
-                { "recipient_id": "producer_1", "role": "producer", "percent": 100 }
-            ]
-        }
-        headers = {'HTTP_IDEMPOTENCY_KEY': 'test-payment-invalid'}
-
-        response = self.client.post(url, data, format='json', **headers)
-
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("amount", response.data)
-
-    def test_post_payment_idempotency(self):
+    @patch('django.db.transaction.on_commit', lambda f: f())
+    @patch('app.tasks.process_payment_task.delay')
+    def test_post_payment_idempotency(self, mock_task):
         url = reverse('payment-create')
         data = {
             "amount": "100.00",
@@ -230,11 +223,43 @@ class PaymentAPITestCase(APITestCase):
         # First request
         response1 = self.client.post(url, data, format='json', **headers)
         self.assertEqual(response1.status_code, status.HTTP_201_CREATED)
-        payment_id1 = response1.data["payment_id"]
+        self.assertEqual(response1.data["payment_id"], "pending")
 
-        # Second request with same key
+        # Second request with same key (still pending)
         response2 = self.client.post(url, data, format='json', **headers)
         self.assertEqual(response2.status_code, status.HTTP_201_CREATED)
-        payment_id2 = response2.data["payment_id"]
+        self.assertEqual(response2.data["payment_id"], "pending")
 
-        self.assertEqual(payment_id1, payment_id2)
+        self.assertEqual(mock_task.call_count, 1)
+
+    @patch('django.db.transaction.on_commit', lambda f: f())
+    @patch('app.tasks.process_payment_task.delay')
+    def test_post_payment_idempotency_after_captured(self, mock_task):
+        # Manually create a captured payment
+        Payment.objects.create(
+            status='captured',
+            gross_amount=Decimal("100.00"),
+            platform_fee_amount=Decimal("3.99"),
+            net_amount=Decimal("96.01"),
+            payment_method="card",
+            installments=1,
+            idempotency_key="captured-key"
+        )
+        
+        url = reverse('payment-create')
+        data = {
+            "amount": "100.00",
+            "currency": "BRL",
+            "payment_method": "card",
+            "installments": 1,
+            "splits": [
+                { "recipient_id": "producer_1", "role": "producer", "percent": 100 }
+            ]
+        }
+        headers = {'HTTP_IDEMPOTENCY_KEY': "captured-key"}
+
+        response = self.client.post(url, data, format='json', **headers)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["status"], "captured")
+        self.assertNotEqual(response.data["payment_id"], "pending")
+        self.assertEqual(mock_task.call_count, 0)

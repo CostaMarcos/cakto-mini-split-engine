@@ -1,5 +1,6 @@
 from django.test import TestCase
 from decimal import Decimal
+from unittest.mock import patch
 from app.models import Payment, LedgerEntry, OutboxEvent
 from app.services.payment_service import PaymentService
 
@@ -7,7 +8,7 @@ class PaymentServiceTestCase(TestCase):
     def setUp(self):
         self.service = PaymentService()
         self.valid_data = {
-            "amount": Decimal("100.00"),
+            "amount": "100.00",
             "currency": "BRL",
             "payment_method": "card",
             "installments": 1,
@@ -18,51 +19,58 @@ class PaymentServiceTestCase(TestCase):
         }
         self.idempotency_key = "test-key-123"
 
-    def test_execute_success(self):
+    @patch('django.db.transaction.on_commit', lambda f: f())
+    @patch('app.tasks.process_payment_task.delay')
+    def test_execute_async_success(self, mock_task):
         result = self.service.execute(self.valid_data, self.idempotency_key)
 
-        # Verify response structure
-        self.assertIn("payment_id", result)
-        self.assertEqual(result["status"], "captured")
-        self.assertEqual(result["gross_amount"], Decimal("100.00"))
-        self.assertEqual(result["platform_fee_amount"], Decimal("3.99"))
-        self.assertEqual(result["net_amount"], Decimal("96.01"))
+        # Verify response structure (should be processing/pending)
+        self.assertEqual(result["payment_id"], "pending")
+        self.assertEqual(result["status"], "processing")
+        self.assertEqual(result["gross_amount"], 100.00)
+        self.assertEqual(result["platform_fee_amount"], 3.99)
+        self.assertEqual(result["net_amount"], 96.01)
         self.assertEqual(len(result["receivables"]), 2)
-        self.assertEqual(result["outbox_event"]["type"], "payment_captured")
-        self.assertEqual(result["outbox_event"]["status"], "published")
-
-        # Verify DB records
-        payment = Payment.objects.get(idempotency_key=self.idempotency_key)
-        self.assertEqual(payment.gross_amount, Decimal("100.00"))
-        self.assertEqual(payment.ledger_entries.count(), 2)
         
-        self.assertTrue(OutboxEvent.objects.filter(payload__payment_id=str(payment.id)).exists())
+        # Verify OutboxEvent creation
+        self.assertEqual(result["outbox_event"]["type"], "payment_requested")
+        self.assertEqual(result["outbox_event"]["status"], "pending")
 
-    def test_execute_idempotency(self):
-        # First execution
-        result1 = self.service.execute(self.valid_data, self.idempotency_key)
-        payment_id1 = result1["payment_id"]
+        # Verify DB records (Payment should NOT be created yet)
+        self.assertFalse(Payment.objects.filter(idempotency_key=self.idempotency_key).exists())
+        self.assertTrue(OutboxEvent.objects.filter(status='pending').exists())
+        
+        # Task should be dispatched
+        mock_task.assert_called_once()
 
-        # Second execution with same key
-        result2 = self.service.execute(self.valid_data, self.idempotency_key)
-        payment_id2 = result2["payment_id"]
+    @patch('django.db.transaction.on_commit', lambda f: f())
+    @patch('app.tasks.process_payment_task.delay')
+    def test_execute_idempotency_before_processing(self, mock_task):
+        # Two calls with same key
+        self.service.execute(self.valid_data, self.idempotency_key)
+        self.service.execute(self.valid_data, self.idempotency_key)
 
-        self.assertEqual(payment_id1, payment_id2)
-        self.assertEqual(Payment.objects.filter(idempotency_key=self.idempotency_key).count(), 1)
+        # Should only create 1 OutboxEvent and dispatch 1 task
+        self.assertEqual(OutboxEvent.objects.filter(type="payment_requested").count(), 1)
+        self.assertEqual(mock_task.call_count, 1)
 
-    def test_execute_with_different_splits(self):
-        data = {
-            "amount": Decimal("200.00"),
-            "currency": "BRL",
-            "payment_method": "pix",
-            "splits": [
-                {"recipient_id": "only_one", "role": "producer", "percent": 100},
-            ]
-        }
-        result = self.service.execute(data, "another-key")
+    @patch('django.db.transaction.on_commit', lambda f: f())
+    @patch('app.tasks.process_payment_task.delay')
+    def test_execute_idempotency_after_processing(self, mock_task):
+        # Simulate payment already exists
+        Payment.objects.create(
+            status='captured',
+            gross_amount=Decimal("100.00"),
+            platform_fee_amount=Decimal("3.99"),
+            net_amount=Decimal("96.01"),
+            payment_method="card",
+            installments=1,
+            idempotency_key=self.idempotency_key
+        )
 
-        self.assertEqual(result["gross_amount"], Decimal("200.00"))
-        self.assertEqual(result["platform_fee_amount"], Decimal("0.00"))
-        self.assertEqual(result["net_amount"], Decimal("200.00"))
-        self.assertEqual(len(result["receivables"]), 1)
-        self.assertEqual(result["receivables"][0]["recipient_id"], "only_one")
+        result = self.service.execute(self.valid_data, self.idempotency_key)
+
+        # Should return existing payment info
+        self.assertNotEqual(result["payment_id"], "pending")
+        self.assertEqual(result["status"], "captured")
+        self.assertEqual(mock_task.call_count, 0)

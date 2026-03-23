@@ -35,12 +35,8 @@ class PaymentProcessorTestCase(TestCase):
         
         result = self.processor.execute(data)
         
-        # 100 - 3.99 = 96.01 net
-        # 96.01 * 0.6 = 57.606 -> 57.61
-        # 96.01 - 57.61 = 38.40
-        
-        self.assertEqual(result["gross_amount"], Decimal("100.00"))
-        self.assertEqual(result["platform_fee_amount"], Decimal("3.99"))
-        self.assertEqual(result["net_amount"], Decimal("96.01"))
-        self.assertEqual(result["receivables"][0]["amount"], Decimal("57.61"))
-        self.assertEqual(result["receivables"][1]["amount"], Decimal("38.40"))
+        self.assertEqual(Decimal(result["gross_amount"]), Decimal("100.00"))
+        self.assertEqual(result["platform_fee_amount"], 3.99)
+        self.assertEqual(result["net_amount"], 96.01)
+        self.assertEqual(result["receivables"][0]["amount"], 57.61)
+        self.assertEqual(result["receivables"][1]["amount"], 38.40)
