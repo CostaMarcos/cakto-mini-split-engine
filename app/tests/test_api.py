@@ -92,7 +92,6 @@ class CheckoutQuoteAPITestCase(APITestCase):
         self.assertEqual(total_sum_split, Decimal(response.data["net_amount"]))
         self.assertEqual(len(response.data["receivables"]), 3)
 
-
     def test_post_checkout_quote_twelve_installment_decimal_splits(self):
         url = reverse('checkout-quote')
         data = {
@@ -135,7 +134,6 @@ class CheckoutQuoteAPITestCase(APITestCase):
         self.assertIn("installments", response.data)
         self.assertEqual(response.data["installments"][0], "Transações via PIX não podem ter parcelas.")
 
-
     def test_post_checkout_quote_pix_decimal_splits(self):
         url = reverse('checkout-quote')
         data = {
@@ -158,3 +156,85 @@ class CheckoutQuoteAPITestCase(APITestCase):
         total_sum_split = sum(Decimal(receivable["amount"]) for receivable in response.data["receivables"])
         self.assertEqual(total_sum_split, Decimal(response.data["net_amount"]))
         self.assertEqual(len(response.data["receivables"]), 5)
+
+class PaymentAPITestCase(APITestCase):
+    def test_post_payment_success(self):
+        url = reverse('payment-create')
+        data = {
+            "amount": "100.00",
+            "currency": "BRL",
+            "payment_method": "card",
+            "installments": 1,
+            "splits": [
+                { "recipient_id": "producer_1", "role": "producer", "percent": 100 }
+            ]
+        }
+        headers = {'HTTP_IDEMPOTENCY_KEY': 'test-payment-123'}
+
+        response = self.client.post(url, data, format='json', **headers)
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["gross_amount"], "100.00")
+        self.assertIn("payment_id", response.data)
+        self.assertIn("outbox_event", response.data)
+
+    def test_post_payment_missing_idempotency_key(self):
+        url = reverse('payment-create')
+        data = {
+            "amount": "100.00",
+            "currency": "BRL",
+            "payment_method": "card",
+            "installments": 1,
+            "splits": [
+                { "recipient_id": "producer_1", "role": "producer", "percent": 100 }
+            ]
+        }
+
+        response = self.client.post(url, data, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["error"], "Idempotency-Key header é obrigatório.")
+
+    def test_post_payment_invalid_data(self):
+        url = reverse('payment-create')
+        data = {
+            "amount": "invalid",
+            "currency": "BRL",
+            "payment_method": "card",
+            "installments": 1,
+            "splits": [
+                { "recipient_id": "producer_1", "role": "producer", "percent": 100 }
+            ]
+        }
+        headers = {'HTTP_IDEMPOTENCY_KEY': 'test-payment-invalid'}
+
+        response = self.client.post(url, data, format='json', **headers)
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("amount", response.data)
+
+    def test_post_payment_idempotency(self):
+        url = reverse('payment-create')
+        data = {
+            "amount": "100.00",
+            "currency": "BRL",
+            "payment_method": "card",
+            "installments": 1,
+            "splits": [
+                { "recipient_id": "producer_1", "role": "producer", "percent": 100 }
+            ]
+        }
+        key = "same-key-123"
+        headers = {'HTTP_IDEMPOTENCY_KEY': key}
+
+        # First request
+        response1 = self.client.post(url, data, format='json', **headers)
+        self.assertEqual(response1.status_code, status.HTTP_201_CREATED)
+        payment_id1 = response1.data["payment_id"]
+
+        # Second request with same key
+        response2 = self.client.post(url, data, format='json', **headers)
+        self.assertEqual(response2.status_code, status.HTTP_201_CREATED)
+        payment_id2 = response2.data["payment_id"]
+
+        self.assertEqual(payment_id1, payment_id2)
