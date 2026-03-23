@@ -3,10 +3,10 @@ from rest_framework import serializers
 class SplitSerializer(serializers.Serializer):
     recipient_id = serializers.CharField(max_length=255)
     role = serializers.CharField(max_length=50)
-    percent = serializers.DecimalField(max_digits=5, decimal_places=2, min_value=0, max_value=100)
+    percent = serializers.FloatField(min_value=0, max_value=100)
 
 class RequestTransactionSerializer(serializers.Serializer):
-    amount = serializers.DecimalField(max_digits=10, decimal_places=2)
+    amount = serializers.FloatField(min_value=0.01)
     currency = serializers.CharField(max_length=3, default='BRL')
     payment_method = serializers.ChoiceField(choices=['card', 'pix'])
     installments = serializers.IntegerField(min_value=0, max_value=12, required=False)
