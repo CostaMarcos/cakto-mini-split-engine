@@ -3,7 +3,7 @@ from rest_framework import serializers
 class SplitSerializer(serializers.Serializer):
     recipient_id = serializers.CharField(max_length=255)
     role = serializers.CharField(max_length=50)
-    percent = serializers.IntegerField(min_value=0, max_value=100)
+    percent = serializers.DecimalField(max_digits=5, decimal_places=2, min_value=0, max_value=100)
 
 class RequestTransactionSerializer(serializers.Serializer):
     amount = serializers.DecimalField(max_digits=10, decimal_places=2)
@@ -21,6 +21,19 @@ class RequestTransactionSerializer(serializers.Serializer):
         if total_percent != 100:
             raise serializers.ValidationError("A soma das porcentagens dos splits deve ser exatamente 100.")
         return value
+
+    def validate(self, data):
+        payment_method = data.get('payment_method')
+        installments = data.get('installments')
+
+        if payment_method == 'pix' and installments:
+            raise serializers.ValidationError({
+                "installments": "Transações via PIX não podem ter parcelas."
+            })
+        elif payment_method == 'card' and installments is None:
+            data['installments'] = 1  # Define 1 parcela como padrão para cartões
+
+        return data
 
 class ReceivableSerializer(serializers.Serializer):
     recipient_id = serializers.CharField(max_length=255)
