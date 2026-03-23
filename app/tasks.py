@@ -1,4 +1,5 @@
 from decimal import Decimal
+from datetime import datetime
 from celery import shared_task
 from django.db import transaction
 from app.models import Payment, LedgerEntry, OutboxEvent
@@ -52,7 +53,7 @@ def process_payment_task(self, event_id):
                 platform_fee_amount=results["platform_fee_amount"],
                 net_amount=results["net_amount"],
                 payment_method=transaction_data["payment_method"],
-                installments=transaction_data.get("installments", 1),
+                installments=transaction_data["installments"],
                 idempotency_key=idempotency_key
             )
 
@@ -71,6 +72,7 @@ def process_payment_task(self, event_id):
                 "processed_status": payment.status
             })
             outbox_event.payload = new_payload
+            outbox_event.published_at = datetime.now()
             outbox_event.save()
 
             print(f"Payment {payment.id} processed successfully for event {event_id}")

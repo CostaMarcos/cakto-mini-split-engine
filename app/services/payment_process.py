@@ -30,7 +30,7 @@ class PaymentProcessor:
         return fee_amount
 
     def execute(self, data: TransactionData) -> Dict[str, Any]:
-        gross_amount = data["amount"]
+        gross_amount = Decimal(str(data["amount"]))
         installments = data.get("installments", 1) 
         method = data["payment_method"]
         splits = data["splits"]
@@ -53,13 +53,13 @@ class PaymentProcessor:
             receivables.append({
                 "recipient_id": split["recipient_id"],
                 "role": split["role"],
-                "amount": recipient_amount
+                "amount": float(recipient_amount)
             })
 
         return {
-            "gross_amount": gross_amount,
-            "platform_fee_amount": fee_amount,
-            "net_amount": net_amount,
+            "gross_amount": float(gross_amount),
+            "platform_fee_amount": float(fee_amount),
+            "net_amount": float(net_amount),
             "receivables": receivables,
             "installments": installments,
             "payment_method": method

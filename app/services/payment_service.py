@@ -9,31 +9,37 @@ class PaymentService:
     def __init__(self):
         self.processor = PaymentProcessor()
 
-    def _serialize_decimal(self, obj: Any) -> Any:
-        """
-        Recursively converts Decimal objects to float for JSON serialization.
-        """
-        if isinstance(obj, Decimal):
-            return float(obj)
-        elif isinstance(obj, dict):
-            return {k: self._serialize_decimal(v) for k, v in obj.items()}
-        elif isinstance(obj, list):
-            return [self._serialize_decimal(v) for v in obj]
-        return obj
-
     def execute(self, data: TransactionData, idempotency_key: str) -> Dict[str, Any]:
-        existing_payment = Payment.objects.filter(idempotency_key=idempotency_key).first()
-        if existing_payment:
-            return self._format_response(existing_payment)
+
+        payment_cache = self.payment_cache(idempotency_key)
+
+        if payment_cache:
+            return payment_cache
+
+        outbox_event_exists = self.outbox_event_cache(idempotency_key)
+
+        if outbox_event_exists is not None:
+            return {
+                "payment_id": "pending",
+                "status": "processing",
+                "gross_amount": None,
+                "platform_fee_amount": None,
+                "net_amount": None,
+                "receivables": [],
+                "outbox_event": {
+                    "type": outbox_event_exists.type,
+                    "status": outbox_event_exists.status
+                }
+            }
 
         with transaction.atomic():
             results = self.processor.execute(data)
 
-            payload = self._serialize_decimal({
+            payload = {
                 "transaction_data": data,
                 "idempotency_key": idempotency_key,
                 "calculated_results": results
-            })
+            }
 
             outbox_event = OutboxEvent.objects.create(
                 type="payment_requested",
@@ -58,6 +64,17 @@ class PaymentService:
                     "status": outbox_event.status
                 }
             }
+
+    def payment_cache(self, idempotency_key: str) -> dict | None:
+        existing_payment = Payment.objects.filter(idempotency_key=idempotency_key).first()
+
+        if existing_payment:
+            return self._format_response(existing_payment)
+
+        return None
+
+    def outbox_event_cache(self, idempotency_key: str) -> dict | None:
+        return OutboxEvent.objects.filter(idempotency_key=idempotency_key).first()
 
     def _format_response(self, payment: Payment) -> Dict[str, Any]:
         receivables = []

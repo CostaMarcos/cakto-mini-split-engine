@@ -7,10 +7,6 @@ from app.services.payment_process import PaymentProcessor
 from app.services.payment_service import PaymentService
 
 
-class HealthCheckViewSet(viewsets.ViewSet):
-    def list(self, request):
-        return Response({"status": "ok"}, status=status.HTTP_200_OK)
-
 class CheckoutQuoteView(APIView):
     def post(self, request):
         serializer = RequestTransactionSerializer(data=request.data)
